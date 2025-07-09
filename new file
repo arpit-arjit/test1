@@ -1,0 +1,142 @@
+!pip install pathway bokeh --quiet # This cell may take a few seconds to execute.
+import pathway as pw
+import pandas as pd
+import numpy as np
+import panel as pn
+import bokeh.plotting as bk
+from bokeh.models import ColumnDataSource
+
+# Enable Panel extensions
+pn.extension('bokeh', 'tabulator')
+
+# Schema
+class TrafficSchema(pw.Schema):
+    ID: int
+    SystemCodeNumber: str
+    Capacity: int
+    Occupancy: int
+    VehicleType: str
+    TrafficConditionNearby: str
+
+class TrafficDashboard:
+    def __init__(self, alpha=0.1, base_price=10.0):
+        self.alpha = alpha
+        self.base_price = base_price
+        self.data = None
+        self.price_history = []
+        
+    def create_sample_data(self):
+        """Create sample data"""
+        np.random.seed(42)
+        n = 50
+        
+        data = {
+            'ID': range(1, n+1),
+            'SystemCodeNumber': np.random.choice(['SYS001', 'SYS002', 'SYS003'], n),
+            'Capacity': np.random.randint(50, 200, n),
+            'Occupancy': np.random.randint(10, 180, n),
+            'VehicleType': np.random.choice(['Car', 'Bus', 'Truck'], n),
+            'TrafficConditionNearby': np.random.choice(['low', 'medium', 'high'], n)
+        }
+        
+        self.data = pd.DataFrame(data)
+        return self.data
+    
+    def calculate_occupancy_rate(self):
+        """Calculate occupancy rate"""
+        self.data['occupancy_rate'] = self.data['Occupancy'] / self.data['Capacity']
+        return self.data['occupancy_rate']
+    
+    def calculate_next_price(self, current_price, occupancy_rate):
+        """Price model: Price(t+1) = Price(t) + (α * Occupancy/Capacity)"""
+        next_price = current_price + (self.alpha * occupancy_rate)
+        return max(next_price, self.base_price)
+    
+    def simulate_pricing(self, periods=10):
+        """Simulate pricing over periods"""
+        self.calculate_occupancy_rate()
+        
+        current_price = self.base_price
+        self.price_history = [current_price]
+        
+        for period in range(periods):
+            avg_occupancy_rate = self.data['occupancy_rate'].mean()
+            current_price = self.calculate_next_price(current_price, avg_occupancy_rate)
+            self.price_history.append(current_price)
+        
+        return self.price_history
+    
+    def create_plots(self):
+        """Create Bokeh visualizations"""
+        # Occupancy distribution
+        p1 = bk.figure(title="Occupancy Distribution", width=400, height=300)
+        hist, edges = np.histogram(self.data['occupancy_rate'], bins=15)
+        p1.quad(top=hist, bottom=0, left=edges[:-1], right=edges[1:], 
+               fill_color="blue", alpha=0.7)
+        p1.xaxis.axis_label = "Occupancy Rate"
+        p1.yaxis.axis_label = "Count"
+        
+        # Price simulation
+        p2 = bk.figure(title="Price Simulation", width=400, height=300)
+        periods = list(range(len(self.price_history)))
+        p2.line(periods, self.price_history, line_width=2, color="red")
+        p2.circle(periods, self.price_history, size=6, color="red")
+        p2.xaxis.axis_label = "Time Period"
+        p2.yaxis.axis_label = "Price ($)"
+        
+        # Occupancy vs System
+        system_avg = self.data.groupby('SystemCodeNumber')['occupancy_rate'].mean()
+        p3 = bk.figure(title="Avg Occupancy by System", 
+                      x_range=list(system_avg.index), width=400, height=300)
+        p3.vbar(x=list(system_avg.index), top=list(system_avg.values), 
+               width=0.8, color="green", alpha=0.7)
+        p3.xaxis.axis_label = "System"
+        p3.yaxis.axis_label = "Occupancy Rate"
+        
+        return [p1, p2, p3]
+    
+    def create_dashboard(self):
+        """Create Panel dashboard"""
+        self.create_sample_data()
+        self.simulate_pricing()
+        plots = self.create_plots()
+        
+        # Data table
+        table = pn.widgets.Tabulator(
+            self.data[['SystemCodeNumber', 'Occupancy', 'Capacity', 'occupancy_rate']].head(20),
+            pagination='remote',
+            page_size=10
+        )
+        
+        # Layout
+        dashboard = pn.Column(
+            "# Traffic Dashboard",
+            pn.Row(*[pn.pane.Bokeh(plot) for plot in plots]),
+            "## Data Table",
+            table
+        )
+        
+        return dashboard
+
+# Create and display dashboard
+dashboard = TrafficDashboard()
+dash = dashboard.create_dashboard()
+
+# For Colab display
+print("Dashboard created successfully!")
+print(f"Data shape: {dashboard.data.shape}")
+print(f"Price history: {dashboard.price_history[:5]}...")  # Show first 5 values
+
+# Multiple ways to display in Colab
+try:
+    # Method 1: Direct display
+    dash.show()
+except:
+    # Method 2: Servable
+    dash.servable()
+    
+# Method 3: Display individual plots 
+plots = dashboard.create_plots()
+for i, plot in enumerate(plots):
+    print(f"Plot {i+1}: {plot.title.text}")
+    bk.show(plot)
